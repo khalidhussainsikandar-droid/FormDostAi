@@ -13,7 +13,7 @@ st.set_page_config(
 )
 
 APP_TITLE = "FormSathi AI"
-MODEL = os.getenv("OPENAI_MODEL", "llama-3.2-11b-vision-preview")
+MODEL = os.getenv("OPENAI_MODEL", "llama-3.2-90b-vision-preview")
 
 SYSTEM_PROMPT = """
 You are FormSathi AI, a helpful multilingual form assistant for people in Pakistan.
