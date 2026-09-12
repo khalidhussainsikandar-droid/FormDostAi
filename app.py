@@ -14,6 +14,8 @@ st.set_page_config(
 )
 
 APP_TITLE = "FormSathi AI"
+# Active Gemini Model
+MODEL_NAME = "gemini-2.5-flash"
 
 SYSTEM_PROMPT = """
 You are FormSathi AI, a helpful multilingual form assistant for people in Pakistan.
@@ -78,7 +80,6 @@ Return ONLY valid JSON matching the required schema. No extra text or markdown f
         if len(text_content.strip()) > 50:
             contents = [prompt, f"\n\nFORM TEXT:\n{text_content}"]
         else:
-            # Fallback to rendering first page as image if PDF has scanned text
             doc = fitz.open(file_path)
             pix = doc[0].get_pixmap(matrix=fitz.Matrix(1.5, 1.5))
             img_path = "/tmp/page1.png"
@@ -90,7 +91,7 @@ Return ONLY valid JSON matching the required schema. No extra text or markdown f
         contents = [prompt, img]
 
     response = client.models.generate_content(
-        model="gemini-2.5-flash",
+        model=MODEL_NAME,
         contents=contents,
         config=types.GenerateContentConfig(
             response_mime_type="application/json",
@@ -223,7 +224,7 @@ USER QUESTION:
 {question}
 """
                         response = client.models.generate_content(
-                            model="gemini-2.5-flash",
+                            model=MODEL_NAME,
                             contents=chat_prompt
                         )
                         answer = response.text
