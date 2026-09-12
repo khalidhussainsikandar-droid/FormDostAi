@@ -14,8 +14,8 @@ st.set_page_config(
 )
 
 APP_TITLE = "FormSathi AI"
-# Active Gemini Model
-MODEL_NAME = "gemini-2.5-flash"
+# Active and supported model for image and text analysis
+MODEL_NAME = "gemini-3.6-flash"
 
 SYSTEM_PROMPT = """
 You are FormSathi AI, a helpful multilingual form assistant for people in Pakistan.
