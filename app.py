@@ -1,10 +1,11 @@
 import os
 import json
-import base64
 from pathlib import Path
 import streamlit as st
 import fitz  # PyMuPDF
-from openai import OpenAI
+from PIL import Image
+from google import genai
+from google.genai import types
 
 st.set_page_config(
     page_title="FormSathi AI",
@@ -13,7 +14,6 @@ st.set_page_config(
 )
 
 APP_TITLE = "FormSathi AI"
-MODEL = os.getenv("OPENAI_MODEL", "llama-3.2-90b-vision-preview")
 
 SYSTEM_PROMPT = """
 You are FormSathi AI, a helpful multilingual form assistant for people in Pakistan.
@@ -41,15 +41,10 @@ For form analysis, return valid JSON with exactly these keys:
 """
 
 def get_client():
-    key = os.getenv("OPENAI_API_KEY")
+    key = os.getenv("GEMINI_API_KEY")
     if not key:
-        raise RuntimeError("API_KEY is missing in Streamlit Secrets.")
-    
-    # Yeh line zaroori hai agar aap Groq key ('gsk_') use kar rahe hain
-    if key.startswith("gsk_"):
-        return OpenAI(api_key=key, base_url="https://api.groq.com/openai/v1")
-    
-    return OpenAI(api_key=key)
+        raise RuntimeError("GEMINI_API_KEY is missing in Streamlit Secrets.")
+    return genai.Client(api_key=key)
 
 def extract_pdf_text(path: str) -> str:
     doc = fitz.open(path)
@@ -60,46 +55,49 @@ def extract_pdf_text(path: str) -> str:
             chunks.append(f"--- PAGE {i+1} ---\n{text}")
     return "\n\n".join(chunks)
 
-def image_data_url(path: str) -> str:
-    suffix = Path(path).suffix.lower()
-    mime = {
-        ".png": "image/png",
-        ".jpg": "image/jpeg",
-        ".jpeg": "image/jpeg",
-        ".webp": "image/webp",
-    }.get(suffix, "image/png")
-    data = base64.b64encode(Path(path).read_bytes()).decode("utf-8")
-    return f"data:{mime};base64,{data}"
-
-def call_text_model(instruction: str, context: str) -> str:
+def analyze_form_gemini(file_path, file_type, language):
     client = get_client()
-    response = client.chat.completions.create(
-        model=MODEL,
-        messages=[
-            {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user", "content": f"{instruction}\n\nFORM CONTEXT:\n{context[:30000]}"}
-        ],
-        response_format={"type": "json_object"}
+    
+    lang_instr = (
+        "Answer explanations in English." if language == "English"
+        else "Answer explanations in Urdu script." if language == "Urdu"
+        else "Answer explanations in simple Roman Urdu."
     )
-    return response.choices[0].message.content
+    
+    prompt = f"""
+{SYSTEM_PROMPT}
 
-def call_image_model(instruction: str, path: str) -> str:
-    client = get_client()
-    response = client.chat.completions.create(
-        model=MODEL,
-        messages=[
-            {"role": "system", "content": SYSTEM_PROMPT},
-            {
-                "role": "user",
-                "content": [
-                    {"type": "text", "text": instruction},
-                    {"type": "image_url", "image_url": {"url": image_data_url(path)}}
-                ]
-            }
-        ],
-        response_format={"type": "json_object"}
+Analyze this form carefully. {lang_instr}
+Identify fields, explanations, examples, required documents, missing info, and next steps.
+Return ONLY valid JSON matching the required schema. No extra text or markdown formatting outside JSON if possible, but standard JSON is required.
+"""
+
+    contents = []
+    if file_type == "pdf":
+        text_content = extract_pdf_text(file_path)
+        if len(text_content.strip()) > 50:
+            contents = [prompt, f"\n\nFORM TEXT:\n{text_content}"]
+        else:
+            # Fallback to rendering first page as image if PDF has scanned text
+            doc = fitz.open(file_path)
+            pix = doc[0].get_pixmap(matrix=fitz.Matrix(1.5, 1.5))
+            img_path = "/tmp/page1.png"
+            pix.save(img_path)
+            img = Image.open(img_path)
+            contents = [prompt, img]
+    else:
+        img = Image.open(file_path)
+        contents = [prompt, img]
+
+    response = client.models.generate_content(
+        model="gemini-2.5-flash",
+        contents=contents,
+        config=types.GenerateContentConfig(
+            response_mime_type="application/json",
+            temperature=0.2
+        )
     )
-    return response.choices[0].message.content
+    return response.text
 
 def parse_json(text: str) -> dict:
     text = text.strip()
@@ -166,22 +164,16 @@ with col1:
         if not uploaded_file:
             st.error("Please upload a file first.")
         else:
-            with st.spinner("Analyzing with AI..."):
+            with st.spinner("Analyzing with Gemini AI..."):
                 try:
                     temp_path = f"/tmp/{uploaded_file.name}"
                     with open(temp_path, "wb") as f:
                         f.write(uploaded_file.getbuffer())
 
                     suffix = Path(temp_path).suffix.lower()
-                    lang_instr = "Answer in Roman Urdu." if language == "Roman Urdu" else "Answer in English."
-                    instruction = f"Analyze this form. {lang_instr} Return ONLY valid JSON."
-
-                    if suffix == ".pdf":
-                        context = extract_pdf_text(temp_path)
-                        raw = call_text_model(instruction, context)
-                    else:
-                        raw = call_image_model(instruction, temp_path)
-
+                    file_type = "pdf" if suffix == ".pdf" else "image"
+                    
+                    raw = analyze_form_gemini(temp_path, file_type, language)
                     data = parse_json(raw)
                     st.session_state.analysis_context = json.dumps(data, ensure_ascii=False, indent=2)
                     st.session_state.messages = []
@@ -220,14 +212,21 @@ with col2:
                 with st.spinner("Thinking..."):
                     try:
                         client = get_client()
-                        response = client.chat.completions.create(
-                            model=MODEL,
-                            messages=[
-                                {"role": "system", "content": SYSTEM_PROMPT},
-                                {"role": "user", "content": f"Context:\n{st.session_state.analysis_context}\n\nQuestion:\n{question}"}
-                            ]
+                        chat_prompt = f"""
+You are FormSathi AI. Answer the user's question based ONLY on the form analysis context provided below.
+Language: {language}
+
+FORM ANALYSIS:
+{st.session_state.analysis_context}
+
+USER QUESTION:
+{question}
+"""
+                        response = client.models.generate_content(
+                            model="gemini-2.5-flash",
+                            contents=chat_prompt
                         )
-                        answer = response.choices[0].message.content
+                        answer = response.text
                         st.markdown(answer)
                         st.session_state.messages.append({"role": "assistant", "content": answer})
                     except Exception as e:
