@@ -14,7 +14,6 @@ st.set_page_config(
 )
 
 APP_TITLE = "FormSathi AI"
-# Active and supported model for image and text analysis
 MODEL_NAME = "gemini-3.6-flash"
 
 SYSTEM_PROMPT = """
@@ -110,7 +109,7 @@ def parse_json(text: str) -> dict:
         raise ValueError("AI did not return valid JSON.")
     return json.loads(text[start:end + 1])
 
-def format_analysis(data: dict) -> str:
+def format_analysis_ui(data: dict):
     title = data.get("form_title", "Uploaded Form")
     summary = data.get("summary", "")
     fields = data.get("fields", [])
@@ -119,21 +118,49 @@ def format_analysis(data: dict) -> str:
     steps = data.get("next_steps", [])
     warnings = data.get("warnings", [])
 
-    md = f"## 📄 {title}\n\n**Summary:** {summary}\n\n### 🧩 Fields\n"
-    if fields:
-        for item in fields:
-            req = "Required" if item.get("required") else "Optional"
-            md += f"- **{item.get('field','Unknown')}** (`{req}`)\n  - *Explanation:* {item.get('explanation','')}\n  - *Example:* {item.get('example','')}\n\n"
-    else:
-        md += "No fields detected.\n\n"
+    st.markdown(f"### 📄 {title}")
+    st.info(f"**Summary:** {summary}")
 
-    md += "### 📋 Required Documents\n"
-    md += "\n".join([f"- ☐ {x}" for x in documents]) + "\n\n" if documents else "- None found.\n\n"
-    md += "### ⚠️ Missing / Unclear\n"
-    md += "\n".join([f"- {x}" for x in missing]) + "\n\n" if missing else "- None.\n\n"
-    md += "### 🧭 Next Steps\n"
-    md += "\n".join([f"{i+1}. {x}" for i, x in enumerate(steps)]) + "\n\n" if steps else "- Verify officially.\n\n"
-    return md
+    # Professional Tabs Layout
+    tab1, tab2, tab3, tab4 = st.tabs(["🧩 Form Fields", "📋 Documents", "⚠️ Missing Info", "🧭 Next Steps"])
+
+    with tab1:
+        st.markdown("#### Detailed Field Breakdown")
+        if fields:
+            for item in fields:
+                req = "🔴 Required" if item.get("required") else "🟢 Optional"
+                with st.expander(f"{item.get('field', 'Unknown Field')} ({req})"):
+                    st.markdown(f"**Explanation:** {item.get('explanation', '')}")
+                    st.markdown(f"**Example to fill:** `{item.get('example', '')}`")
+        else:
+            st.warning("No fields detected.")
+
+    with tab2:
+        st.markdown("#### Required Documents Checklist")
+        if documents:
+            for doc in documents:
+                st.checkbox(doc, value=False, key=f"doc_{doc}")
+        else:
+            st.success("No specific documents mentioned.")
+
+    with tab3:
+        st.markdown("#### Missing or Unclear Information")
+        if missing:
+            for item in missing:
+                st.warning(item)
+        else:
+            st.success("Everything looks clear!")
+
+    with tab4:
+        st.markdown("#### Step-by-Step Guide")
+        if steps:
+            for i, step in enumerate(steps, 1):
+                st.write(f"**{i}.** {step}")
+        else:
+            st.write("Follow official guidelines.")
+            
+    if warnings:
+        st.error(" | ".join(warnings))
 
 st.title("🇵🇰 FormSathi AI")
 st.subheader("Samjho. Bharo. Submit Karo.")
@@ -180,14 +207,14 @@ with col1:
                     st.session_state.messages = []
                     
                     with result_container:
-                        st.markdown(format_analysis(data))
+                        format_analysis_ui(data)
                 except Exception as e:
                     st.error(f"❌ Error: {e}")
     else:
         with result_container:
             if st.session_state.analysis_context:
                 try:
-                    st.markdown(format_analysis(json.loads(st.session_state.analysis_context)))
+                    format_analysis_ui(json.loads(st.session_state.analysis_context))
                 except:
                     st.info("Upload a form and click Analyze.")
             else:
